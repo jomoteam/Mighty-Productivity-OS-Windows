@@ -11,10 +11,13 @@ pub async fn transcribe_and_refine(
 ) -> Result<String, String> {
     let api_key = api_key.trim().to_string();
     if api_key.is_empty() {
-        return Err("Groq API key is missing. Add your key in Settings to continue.".to_string());
+        return Err("API key is missing. Add your key in Settings to continue.".to_string());
+    }
+    if api_key.starts_with("xai-") {
+        return Err("xAI key saved successfully, but voice transcription still requires a Groq gsk_ audio key because xAI is not a Whisper audio transcription endpoint. Local OCR and supported xAI cloud OCR/chat features can still use xAI.".to_string());
     }
     if !api_key.starts_with("gsk_") {
-        return Err("Voice transcription currently uses Groq Whisper, so it needs a Groq key starting with gsk_. The saved key is not a Groq key; xAI keys are not accepted by Groq's audio endpoint.".to_string());
+        return Err("Unsupported API key. Use a Groq key starting with gsk_ or an xAI key starting with xai-.".to_string());
     }
 
     let client = Client::new();

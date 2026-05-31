@@ -31,13 +31,31 @@ fn persisted_api_key_path() -> std::path::PathBuf {
     let base = std::env::var("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir());
-    base.join("Mighty Productivity OS for Windows").join("groq_api_key.txt")
+    base.join("Mighty Productivity OS for Windows").join("api_key.txt")
+}
+
+fn is_supported_api_key(api_key: &str) -> bool {
+    api_key.starts_with("gsk_") || api_key.starts_with("xai-")
+}
+
+fn api_key_provider(api_key: &str) -> &'static str {
+    if api_key.starts_with("gsk_") {
+        "groq"
+    } else if api_key.starts_with("xai-") {
+        "xai"
+    } else {
+        "none"
+    }
 }
 
 fn load_persisted_api_key() -> String {
-    let from_env = std::env::var("GROQ_API_KEY").unwrap_or_default().trim().to_string();
-    if from_env.starts_with("gsk_") {
-        return from_env;
+    let from_groq_env = std::env::var("GROQ_API_KEY").unwrap_or_default().trim().to_string();
+    if is_supported_api_key(&from_groq_env) {
+        return from_groq_env;
+    }
+    let from_xai_env = std::env::var("XAI_API_KEY").unwrap_or_default().trim().to_string();
+    if is_supported_api_key(&from_xai_env) {
+        return from_xai_env;
     }
     std::fs::read_to_string(persisted_api_key_path())
         .unwrap_or_default()
@@ -55,13 +73,14 @@ struct ApiKeyStatus {
 
 #[tauri::command]
 fn get_api_key_status(state: tauri::State<AppState>) -> ApiKeyStatus {
-    let from_env = std::env::var("GROQ_API_KEY").unwrap_or_default().trim().to_string();
+    let from_groq_env = std::env::var("GROQ_API_KEY").unwrap_or_default().trim().to_string();
+    let from_xai_env = std::env::var("XAI_API_KEY").unwrap_or_default().trim().to_string();
     let path = persisted_api_key_path();
     let from_file = std::fs::read_to_string(&path).unwrap_or_default().trim().to_string();
     let current = state.api_key.lock().map(|k| k.clone()).unwrap_or_default();
-    let has_env = from_env.starts_with("gsk_");
-    let has_file = from_file.starts_with("gsk_");
-    let has_current = current.trim().starts_with("gsk_");
+    let has_env = is_supported_api_key(&from_groq_env) || is_supported_api_key(&from_xai_env);
+    let has_file = is_supported_api_key(&from_file);
+    let has_current = is_supported_api_key(current.trim());
     let source = if has_env {
         "environment"
     } else if has_file {
@@ -87,9 +106,9 @@ fn set_app_state(state: tauri::State<AppState>, recording_mode: String, language
 #[tauri::command]
 fn set_api_key(state: tauri::State<AppState>, api_key: String) -> Result<(), String> {
     let api_key = api_key.trim().to_string();
-    if !api_key.is_empty() && !api_key.starts_with("gsk_") {
-        crate::ocr::runtime_log("Groq API key rejected: incompatible prefix");
-        return Err("Mighty Productivity OS currently uses Groq for voice transcription. Save a Groq key starting with gsk_, or clear the field. xAI keys cannot be sent to Groq.".to_string());
+    if !api_key.is_empty() && !is_supported_api_key(&api_key) {
+        crate::ocr::runtime_log("API key rejected: unsupported provider prefix");
+        return Err("Mighty Productivity OS accepts Groq keys starting with gsk_ or xAI keys starting with xai-.".to_string());
     }
 
     if let Ok(mut key) = state.api_key.lock() {
@@ -102,10 +121,11 @@ fn set_api_key(state: tauri::State<AppState>, api_key: String) -> Result<(), Str
     }
     if api_key.is_empty() {
         let _ = std::fs::remove_file(&path);
-        crate::ocr::runtime_log("Groq API key cleared");
+        crate::ocr::runtime_log("API key cleared");
     } else {
-        std::fs::write(&path, api_key).map_err(|e| format!("Failed to persist Groq API key: {e}"))?;
-        crate::ocr::runtime_log("Groq API key saved: valid Groq key present");
+        let provider = api_key_provider(&api_key);
+        std::fs::write(&path, api_key).map_err(|e| format!("Failed to persist API key: {e}"))?;
+        crate::ocr::runtime_log(format!("API key saved: valid {provider} key present"));
     }
     Ok(())
 }

@@ -347,13 +347,52 @@ Write-Output $result.Text;",
     Ok(text)
 }
 
+
+fn api_provider(api_key: &str) -> &'static str {
+    if api_key.starts_with("gsk_") {
+        "groq"
+    } else if api_key.starts_with("xai-") {
+        "xai"
+    } else {
+        "none"
+    }
+}
+
+fn has_supported_cloud_key(api_key: &str) -> bool {
+    matches!(api_provider(api_key), "groq" | "xai")
+}
+
+fn chat_endpoint(api_key: &str) -> &'static str {
+    if api_key.starts_with("xai-") {
+        "https://api.x.ai/v1/chat/completions"
+    } else {
+        "https://api.groq.com/openai/v1/chat/completions"
+    }
+}
+
+fn vision_model(api_key: &str) -> String {
+    if api_key.starts_with("xai-") {
+        std::env::var("XAI_VISION_MODEL").unwrap_or_else(|_| "grok-2-vision-1212".to_string())
+    } else {
+        std::env::var("GROQ_VISION_MODEL").unwrap_or_else(|_| "meta-llama/llama-4-scout-17b-16e-instruct".to_string())
+    }
+}
+
+fn text_model(api_key: &str) -> String {
+    if api_key.starts_with("xai-") {
+        std::env::var("XAI_TEXT_MODEL").unwrap_or_else(|_| "grok-3-mini".to_string())
+    } else {
+        "llama-3.3-70b-versatile".to_string()
+    }
+}
+
 async fn call_vision_ocr(api_key: &str, image_bytes: &[u8], mime: &str, lang: &str) -> Result<String, String> {
     let client = Client::new();
     let image_data_url = format!("data:{};base64,{}", mime, b64(image_bytes));
     let lang_hint = if lang == "auto" { "auto-detect" } else { lang };
 
     let payload = json!({
-        "model": std::env::var("GROQ_VISION_MODEL").unwrap_or_else(|_| "meta-llama/llama-4-scout-17b-16e-instruct".to_string()),
+        "model": vision_model(api_key),
         "messages": [
             {
                 "role": "system",
@@ -371,7 +410,7 @@ async fn call_vision_ocr(api_key: &str, image_bytes: &[u8], mime: &str, lang: &s
     });
 
     let res = client
-        .post("https://api.groq.com/openai/v1/chat/completions")
+        .post(chat_endpoint(api_key))
         .bearer_auth(api_key)
         .json(&payload)
         .send()
@@ -381,7 +420,7 @@ async fn call_vision_ocr(api_key: &str, image_bytes: &[u8], mime: &str, lang: &s
     let v: serde_json::Value = res.json().await.map_err(|e| format!("OCR parse failed: {e}"))?;
     let text = v["choices"][0]["message"]["content"].as_str().unwrap_or("").trim().to_string();
     if text.is_empty() {
-        return Err(format!("Cloud OCR failed or returned no text. Keep OCR Speed on Local, or set GROQ_VISION_MODEL to a Groq vision model your key can access. Response: {}", v));
+        return Err(format!("Cloud OCR failed or returned no text. Keep OCR Speed on Local, or check your provider vision model setting. Response: {}", v));
     }
     Ok(text)
 }
@@ -389,7 +428,7 @@ async fn call_vision_ocr(api_key: &str, image_bytes: &[u8], mime: &str, lang: &s
 async fn translate_text(api_key: &str, original: &str, target_lang: &str) -> Result<String, String> {
     let client = Client::new();
     let payload = json!({
-        "model": "llama-3.3-70b-versatile",
+        "model": text_model(api_key),
         "messages": [
             {
                 "role": "system",
@@ -404,7 +443,7 @@ async fn translate_text(api_key: &str, original: &str, target_lang: &str) -> Res
     });
 
     let res = client
-        .post("https://api.groq.com/openai/v1/chat/completions")
+        .post(chat_endpoint(api_key))
         .bearer_auth(api_key)
         .json(&payload)
         .send()
@@ -424,13 +463,13 @@ pub async fn run_ocr_image_bytes(
 ) -> Result<String, String> {
     runtime_log(format!("OCR image bytes start: input_bytes={} speed={} format={} copy_mode={}", png_bytes.len(), settings.speed_mode, settings.image_format, settings.copy_mode));
     let api_key = api_key.trim().to_string();
-    let has_groq_key = api_key.starts_with("gsk_");
-    if !api_key.is_empty() && !has_groq_key {
-        runtime_log("OCR cloud fallback disabled: saved key is not a Groq key");
+    let has_cloud_key = has_supported_cloud_key(&api_key);
+    if !api_key.is_empty() && !has_cloud_key {
+        runtime_log("OCR cloud fallback disabled: saved key provider is unsupported");
     }
-    if !has_groq_key && settings.speed_mode != "local" {
-        runtime_log("OCR blocked: missing valid Groq API key and speed mode is not local");
-        return Err("Groq API key is missing or invalid. Add a Groq key starting with gsk_, or switch OCR Speed to Local.".to_string());
+    if !has_cloud_key && settings.speed_mode != "local" {
+        runtime_log("OCR blocked: missing supported cloud API key and speed mode is not local");
+        return Err("Cloud API key is missing or invalid. Add a Groq key starting with gsk_, add an xAI key starting with xai-, or switch OCR Speed to Local.".to_string());
     }
 
     let started = Instant::now();
@@ -462,7 +501,7 @@ pub async fn run_ocr_image_bytes(
                                 Ok(Ok(_)) | Ok(Err(_)) | Err(_) => {
                                     let _ = app.emit("app-log", "⚠️ Local retry still weak, falling back to cloud OCR...");
                                     ocr_path = "cloud_fallback";
-                                    if !has_groq_key { return Err("Local OCR returned no text, and no valid Groq fallback key is saved. Add a Groq key starting with gsk_, or try a clearer/larger text region.".to_string()); }
+                                    if !has_cloud_key { return Err("Local OCR returned no text, and no supported cloud fallback key is saved. Add a Groq gsk_ key, an xAI xai- key, or try a clearer/larger text region.".to_string()); }
                                     call_vision_ocr(&api_key, &retry_bytes, "image/png", &settings.ocr_language).await?
                                 }
                             }
@@ -470,7 +509,7 @@ pub async fn run_ocr_image_bytes(
                         Err(err) => {
                             let _ = app.emit("app-log", format!("⚠️ Retry preprocessing failed, falling back to cloud: {}", err));
                             ocr_path = "cloud_fallback";
-                            if !has_groq_key { return Err("Local OCR preprocessing failed, and no valid Groq fallback key is saved. Add a Groq key starting with gsk_, or try a clearer/larger text region.".to_string()); }
+                            if !has_cloud_key { return Err("Local OCR preprocessing failed, and no supported cloud fallback key is saved. Add a Groq gsk_ key, an xAI xai- key, or try a clearer/larger text region.".to_string()); }
                             call_vision_ocr(&api_key, &encoded, mime, &settings.ocr_language).await?
                         }
                     }
@@ -478,24 +517,24 @@ pub async fn run_ocr_image_bytes(
                 Ok(Err(err)) => {
                     let _ = app.emit("app-log", format!("⚠️ Local OCR failed, falling back to cloud: {}", err));
                     ocr_path = "cloud_fallback";
-                    if !has_groq_key { return Err("Local OCR failed, and no valid Groq fallback key is saved. Add a Groq key starting with gsk_, or try a clearer/larger text region.".to_string()); }
+                    if !has_cloud_key { return Err("Local OCR failed, and no supported cloud fallback key is saved. Add a Groq gsk_ key, an xAI xai- key, or try a clearer/larger text region.".to_string()); }
                     call_vision_ocr(&api_key, &encoded, mime, &settings.ocr_language).await?
                 }
                 Err(err) => {
                     let _ = app.emit("app-log", format!("⚠️ Local OCR thread failed, falling back to cloud: {}", err));
                     ocr_path = "cloud_fallback";
-                    if !has_groq_key { return Err("Local OCR failed, and no valid Groq fallback key is saved. Add a Groq key starting with gsk_, or try a clearer/larger text region.".to_string()); }
+                    if !has_cloud_key { return Err("Local OCR failed, and no supported cloud fallback key is saved. Add a Groq gsk_ key, an xAI xai- key, or try a clearer/larger text region.".to_string()); }
                     call_vision_ocr(&api_key, &encoded, mime, &settings.ocr_language).await?
                 }
             }
         }
         #[cfg(not(target_os = "windows"))]
         {
-            if !has_groq_key { return Err("Groq API key is missing or invalid. Add a Groq key starting with gsk_.".to_string()); }
+            if !has_cloud_key { return Err("Cloud API key is missing or invalid. Add a Groq gsk_ key or an xAI xai- key.".to_string()); }
         call_vision_ocr(&api_key, &encoded, mime, &settings.ocr_language).await?
         }
     } else {
-        if !has_groq_key { return Err("Groq API key is missing or invalid. Add a Groq key starting with gsk_.".to_string()); }
+        if !has_cloud_key { return Err("Cloud API key is missing or invalid. Add a Groq gsk_ key or an xAI xai- key.".to_string()); }
         call_vision_ocr(&api_key, &encoded, mime, &settings.ocr_language).await?
     };
 
