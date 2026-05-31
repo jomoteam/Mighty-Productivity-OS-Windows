@@ -1,4 +1,4 @@
-# Mighty Productivity OS for Windows
+# Mighty-Productivity-OS-Windows
 
 Version: v0.4.0
 

@@ -1,7 +1,7 @@
+use enigo::{Enigo, Keyboard, Settings};
 use std::thread;
 use std::time::Duration;
 use tauri_plugin_clipboard_manager::ClipboardExt;
-use enigo::{Enigo, Keyboard, Settings};
 
 /// Write text to clipboard then paste it into the target app via native keyboard simulation.
 pub fn inject_via_clipboard(app: &tauri::AppHandle, text: &str, _target_app: Option<&str>) {

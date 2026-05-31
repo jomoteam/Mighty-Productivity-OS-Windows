@@ -1,7 +1,7 @@
 use std::io::Cursor;
-use std::time::{Duration, Instant};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+use std::time::{Duration, Instant};
 
 use arboard::Clipboard;
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
@@ -18,7 +18,7 @@ pub fn runtime_log(message: impl AsRef<str>) {
     let base = std::env::var("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir());
-    let dir = base.join("Mighty Productivity OS for Windows");
+    let dir = base.join("Mighty-Productivity-OS-Windows");
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join("mightyvoice-runtime.log");
     let ts = std::time::SystemTime::now()
@@ -26,7 +26,10 @@ pub fn runtime_log(message: impl AsRef<str>) {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let line = format!("[{}] {}\n", ts, message.as_ref());
-    let _ = std::fs::OpenOptions::new().create(true).append(true).open(path)
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
         .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
 }
 
@@ -37,10 +40,10 @@ pub struct OcrSettings {
     pub ocr_language: String,
     pub translate_enabled: bool,
     pub translate_target: String,
-    pub copy_mode: String,      // original | translated | both
-    pub image_format: String,   // png | jpeg
-    pub jpeg_quality: u8,       // 1..100
-    pub speed_mode: String,     // local | fast | balanced | accuracy
+    pub copy_mode: String,    // original | translated | both
+    pub image_format: String, // png | jpeg
+    pub jpeg_quality: u8,     // 1..100
+    pub speed_mode: String,   // local | fast | balanced | accuracy
 }
 
 impl Default for OcrSettings {
@@ -71,7 +74,8 @@ mod tests {
 
     #[test]
     fn retry_enhancement_returns_valid_png_with_larger_or_equal_dimensions() {
-        let img = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(80, 30, Rgba([160, 160, 160, 255])));
+        let img =
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(80, 30, Rgba([160, 160, 160, 255])));
         let mut input = Cursor::new(Vec::<u8>::new());
         img.write_to(&mut input, ImageFormat::Png).unwrap();
 
@@ -89,7 +93,6 @@ mod tests {
         assert_eq!(ocr_path_label("cloud_fallback"), "Cloud Fallback");
     }
 }
-
 
 fn is_weak_ocr_text(text: &str) -> bool {
     let trimmed = text.trim();
@@ -110,16 +113,23 @@ fn ocr_path_label(path: &str) -> &'static str {
 
 fn emit_ocr_status(app: &tauri::AppHandle, path: &str, elapsed_ms: u128) {
     let label = ocr_path_label(path);
-    let _ = app.emit("ocr-status", json!({
-        "path": path,
-        "label": label,
-        "elapsedMs": elapsed_ms,
-    }));
-    let _ = app.emit("app-log", format!("✅ OCR copied to clipboard ({} · {}ms)", label, elapsed_ms));
+    let _ = app.emit(
+        "ocr-status",
+        json!({
+            "path": path,
+            "label": label,
+            "elapsedMs": elapsed_ms,
+        }),
+    );
+    let _ = app.emit(
+        "app-log",
+        format!("✅ OCR copied to clipboard ({} · {}ms)", label, elapsed_ms),
+    );
 }
 
 fn enhance_image_for_retry(png_bytes: Vec<u8>) -> Result<Vec<u8>, String> {
-    let img = image::load_from_memory(&png_bytes).map_err(|e| format!("Failed to decode image for retry: {e}"))?;
+    let img = image::load_from_memory(&png_bytes)
+        .map_err(|e| format!("Failed to decode image for retry: {e}"))?;
     let gray = img.to_luma8();
     let (w, h) = gray.dimensions();
     let mut enhanced = ImageBuffer::new(w, h);
@@ -127,14 +137,24 @@ fn enhance_image_for_retry(png_bytes: Vec<u8>) -> Result<Vec<u8>, String> {
     for (x, y, pixel) in gray.enumerate_pixels() {
         let v = pixel[0] as f32;
         let contrasted = ((v - 128.0) * 1.45 + 128.0).clamp(0.0, 255.0) as u8;
-        let sharpened = if contrasted > 150 { 255 } else if contrasted < 105 { 0 } else { contrasted };
+        let sharpened = if contrasted > 150 {
+            255
+        } else if contrasted < 105 {
+            0
+        } else {
+            contrasted
+        };
         enhanced.put_pixel(x, y, image::Luma([sharpened]));
     }
 
     let dyn_img = DynamicImage::ImageLuma8(enhanced);
     let long = w.max(h);
     let retry_img = if long < 1600 {
-        dyn_img.resize_exact((w * 2).max(1), (h * 2).max(1), image::imageops::FilterType::CatmullRom)
+        dyn_img.resize_exact(
+            (w * 2).max(1),
+            (h * 2).max(1),
+            image::imageops::FilterType::CatmullRom,
+        )
     } else {
         dyn_img
     };
@@ -184,7 +204,12 @@ fn wait_clipboard_image(timeout_ms: u64) -> Result<Vec<u8>, String> {
 
     while started.elapsed() < Duration::from_millis(timeout_ms) {
         if let Ok(img) = clipboard.get_image() {
-            runtime_log(format!("clipboard image received: {}x{} bytes={}", img.width, img.height, img.bytes.len()));
+            runtime_log(format!(
+                "clipboard image received: {}x{} bytes={}",
+                img.width,
+                img.height,
+                img.bytes.len()
+            ));
             let mut rgba = Vec::with_capacity(img.bytes.len());
             for px in img.bytes.chunks_exact(4) {
                 // arboard on Windows often returns BGRA; convert to RGBA
@@ -209,9 +234,13 @@ fn wait_clipboard_image(timeout_ms: u64) -> Result<Vec<u8>, String> {
     Err("Screenshot capture cancelled or timed out. Press Esc to cancel the snip overlay, or drag a region to OCR.".to_string())
 }
 
-fn maybe_convert_format(png_bytes: Vec<u8>, settings: &OcrSettings) -> Result<(Vec<u8>, &'static str), String> {
+fn maybe_convert_format(
+    png_bytes: Vec<u8>,
+    settings: &OcrSettings,
+) -> Result<(Vec<u8>, &'static str), String> {
     // Speed optimization: downscale before upload depending on speed mode.
-    let base = image::load_from_memory(&png_bytes).map_err(|e| format!("Failed to decode image: {e}"))?;
+    let base =
+        image::load_from_memory(&png_bytes).map_err(|e| format!("Failed to decode image: {e}"))?;
     let (max_edge, force_jpeg, default_quality) = match settings.speed_mode.as_str() {
         "local" => (2200u32, false, 90u8),
         "fast" => (1280u32, true, 65u8),
@@ -233,10 +262,16 @@ fn maybe_convert_format(png_bytes: Vec<u8>, settings: &OcrSettings) -> Result<(V
         }
     };
 
-    let wants_jpeg = force_jpeg || settings.image_format.eq_ignore_ascii_case("jpeg") || settings.image_format.eq_ignore_ascii_case("jpg");
+    let wants_jpeg = force_jpeg
+        || settings.image_format.eq_ignore_ascii_case("jpeg")
+        || settings.image_format.eq_ignore_ascii_case("jpg");
     if wants_jpeg {
         let mut out = Cursor::new(Vec::<u8>::new());
-        let quality = if settings.jpeg_quality == 0 { default_quality } else { settings.jpeg_quality.clamp(1, 100) };
+        let quality = if settings.jpeg_quality == 0 {
+            default_quality
+        } else {
+            settings.jpeg_quality.clamp(1, 100)
+        };
         let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality);
         encoder
             .encode_image(&resized)
@@ -322,9 +357,22 @@ Write-Output $result.Text;",
         lang = escaped_lang
     );
 
-    runtime_log(format!("local OCR PowerShell starting: path={} lang={}", path.display(), lang));
+    runtime_log(format!(
+        "local OCR PowerShell starting: path={} lang={}",
+        path.display(),
+        lang
+    ));
     let mut command = std::process::Command::new("powershell.exe");
-    command.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", &ps]);
+    command.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        &ps,
+    ]);
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
     let output = command
@@ -336,7 +384,11 @@ Write-Output $result.Text;",
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
         runtime_log(format!("local OCR PowerShell failed: {}", err));
-        return Err(if err.is_empty() { "Local OCR command failed".to_string() } else { err });
+        return Err(if err.is_empty() {
+            "Local OCR command failed".to_string()
+        } else {
+            err
+        });
     }
 
     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -346,7 +398,6 @@ Write-Output $result.Text;",
     }
     Ok(text)
 }
-
 
 fn api_provider(api_key: &str) -> &'static str {
     if api_key.starts_with("gsk_") {
@@ -374,7 +425,8 @@ fn vision_model(api_key: &str) -> String {
     if api_key.starts_with("xai-") {
         std::env::var("XAI_VISION_MODEL").unwrap_or_else(|_| "grok-2-vision-1212".to_string())
     } else {
-        std::env::var("GROQ_VISION_MODEL").unwrap_or_else(|_| "meta-llama/llama-4-scout-17b-16e-instruct".to_string())
+        std::env::var("GROQ_VISION_MODEL")
+            .unwrap_or_else(|_| "meta-llama/llama-4-scout-17b-16e-instruct".to_string())
     }
 }
 
@@ -386,7 +438,12 @@ fn text_model(api_key: &str) -> String {
     }
 }
 
-async fn call_vision_ocr(api_key: &str, image_bytes: &[u8], mime: &str, lang: &str) -> Result<String, String> {
+async fn call_vision_ocr(
+    api_key: &str,
+    image_bytes: &[u8],
+    mime: &str,
+    lang: &str,
+) -> Result<String, String> {
     let client = Client::new();
     let image_data_url = format!("data:{};base64,{}", mime, b64(image_bytes));
     let lang_hint = if lang == "auto" { "auto-detect" } else { lang };
@@ -417,15 +474,26 @@ async fn call_vision_ocr(api_key: &str, image_bytes: &[u8], mime: &str, lang: &s
         .await
         .map_err(|e| format!("OCR request failed: {e}"))?;
 
-    let v: serde_json::Value = res.json().await.map_err(|e| format!("OCR parse failed: {e}"))?;
-    let text = v["choices"][0]["message"]["content"].as_str().unwrap_or("").trim().to_string();
+    let v: serde_json::Value = res
+        .json()
+        .await
+        .map_err(|e| format!("OCR parse failed: {e}"))?;
+    let text = v["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
     if text.is_empty() {
         return Err(format!("Cloud OCR failed or returned no text. Keep OCR Speed on Local, or check your provider vision model setting. Response: {}", v));
     }
     Ok(text)
 }
 
-async fn translate_text(api_key: &str, original: &str, target_lang: &str) -> Result<String, String> {
+async fn translate_text(
+    api_key: &str,
+    original: &str,
+    target_lang: &str,
+) -> Result<String, String> {
     let client = Client::new();
     let payload = json!({
         "model": text_model(api_key),
@@ -450,10 +518,16 @@ async fn translate_text(api_key: &str, original: &str, target_lang: &str) -> Res
         .await
         .map_err(|e| format!("Translate request failed: {e}"))?;
 
-    let v: serde_json::Value = res.json().await.map_err(|e| format!("Translate parse failed: {e}"))?;
-    Ok(v["choices"][0]["message"]["content"].as_str().unwrap_or("").trim().to_string())
+    let v: serde_json::Value = res
+        .json()
+        .await
+        .map_err(|e| format!("Translate parse failed: {e}"))?;
+    Ok(v["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string())
 }
-
 
 pub async fn run_ocr_image_bytes(
     app: tauri::AppHandle,
@@ -461,7 +535,13 @@ pub async fn run_ocr_image_bytes(
     settings: OcrSettings,
     api_key: String,
 ) -> Result<String, String> {
-    runtime_log(format!("OCR image bytes start: input_bytes={} speed={} format={} copy_mode={}", png_bytes.len(), settings.speed_mode, settings.image_format, settings.copy_mode));
+    runtime_log(format!(
+        "OCR image bytes start: input_bytes={} speed={} format={} copy_mode={}",
+        png_bytes.len(),
+        settings.speed_mode,
+        settings.image_format,
+        settings.copy_mode
+    ));
     let api_key = api_key.trim().to_string();
     let has_cloud_key = has_supported_cloud_key(&api_key);
     if !api_key.is_empty() && !has_cloud_key {
@@ -474,7 +554,13 @@ pub async fn run_ocr_image_bytes(
 
     let started = Instant::now();
     let (encoded, mime) = maybe_convert_format(png_bytes, &settings)?;
-    let _ = app.emit("app-log", format!("🧠 Running OCR ({}, speed: {})...", settings.image_format, settings.speed_mode));
+    let _ = app.emit(
+        "app-log",
+        format!(
+            "🧠 Running OCR ({}, speed: {})...",
+            settings.image_format, settings.speed_mode
+        ),
+    );
 
     let mut ocr_path = "cloud";
     let original = if settings.speed_mode == "local" {
@@ -482,64 +568,116 @@ pub async fn run_ocr_image_bytes(
         {
             let bytes = encoded.clone();
             let lang = settings.ocr_language.clone();
-            match tauri::async_runtime::spawn_blocking(move || local_ocr_windows(&bytes, &lang)).await {
+            match tauri::async_runtime::spawn_blocking(move || local_ocr_windows(&bytes, &lang))
+                .await
+            {
                 Ok(Ok(text)) if !is_weak_ocr_text(&text) => {
                     ocr_path = "local";
                     text
                 }
                 Ok(Ok(_text)) => {
-                    let _ = app.emit("app-log", "⚠️ Local OCR was weak; retrying once with enhanced image...");
+                    let _ = app.emit(
+                        "app-log",
+                        "⚠️ Local OCR was weak; retrying once with enhanced image...",
+                    );
                     match enhance_image_for_retry(encoded.clone()) {
                         Ok(retry_bytes) => {
                             let retry_lang = settings.ocr_language.clone();
                             let retry_for_local = retry_bytes.clone();
-                            match tauri::async_runtime::spawn_blocking(move || local_ocr_windows(&retry_for_local, &retry_lang)).await {
+                            match tauri::async_runtime::spawn_blocking(move || {
+                                local_ocr_windows(&retry_for_local, &retry_lang)
+                            })
+                            .await
+                            {
                                 Ok(Ok(retry_text)) if !is_weak_ocr_text(&retry_text) => {
                                     ocr_path = "local";
                                     retry_text
                                 }
                                 Ok(Ok(_)) | Ok(Err(_)) | Err(_) => {
-                                    let _ = app.emit("app-log", "⚠️ Local retry still weak, falling back to cloud OCR...");
+                                    let _ = app.emit(
+                                        "app-log",
+                                        "⚠️ Local retry still weak, falling back to cloud OCR...",
+                                    );
                                     ocr_path = "cloud_fallback";
-                                    if !has_cloud_key { return Err("Local OCR returned no text, and no supported cloud fallback key is saved. Add a Groq gsk_ key, an xAI xai- key, or try a clearer/larger text region.".to_string()); }
-                                    call_vision_ocr(&api_key, &retry_bytes, "image/png", &settings.ocr_language).await?
+                                    if !has_cloud_key {
+                                        return Err("Local OCR returned no text, and no supported cloud fallback key is saved. Add a Groq gsk_ key, an xAI xai- key, or try a clearer/larger text region.".to_string());
+                                    }
+                                    call_vision_ocr(
+                                        &api_key,
+                                        &retry_bytes,
+                                        "image/png",
+                                        &settings.ocr_language,
+                                    )
+                                    .await?
                                 }
                             }
                         }
                         Err(err) => {
-                            let _ = app.emit("app-log", format!("⚠️ Retry preprocessing failed, falling back to cloud: {}", err));
+                            let _ = app.emit(
+                                "app-log",
+                                format!(
+                                    "⚠️ Retry preprocessing failed, falling back to cloud: {}",
+                                    err
+                                ),
+                            );
                             ocr_path = "cloud_fallback";
-                            if !has_cloud_key { return Err("Local OCR preprocessing failed, and no supported cloud fallback key is saved. Add a Groq gsk_ key, an xAI xai- key, or try a clearer/larger text region.".to_string()); }
-                            call_vision_ocr(&api_key, &encoded, mime, &settings.ocr_language).await?
+                            if !has_cloud_key {
+                                return Err("Local OCR preprocessing failed, and no supported cloud fallback key is saved. Add a Groq gsk_ key, an xAI xai- key, or try a clearer/larger text region.".to_string());
+                            }
+                            call_vision_ocr(&api_key, &encoded, mime, &settings.ocr_language)
+                                .await?
                         }
                     }
                 }
                 Ok(Err(err)) => {
-                    let _ = app.emit("app-log", format!("⚠️ Local OCR failed, falling back to cloud: {}", err));
+                    let _ = app.emit(
+                        "app-log",
+                        format!("⚠️ Local OCR failed, falling back to cloud: {}", err),
+                    );
                     ocr_path = "cloud_fallback";
-                    if !has_cloud_key { return Err("Local OCR failed, and no supported cloud fallback key is saved. Add a Groq gsk_ key, an xAI xai- key, or try a clearer/larger text region.".to_string()); }
+                    if !has_cloud_key {
+                        return Err("Local OCR failed, and no supported cloud fallback key is saved. Add a Groq gsk_ key, an xAI xai- key, or try a clearer/larger text region.".to_string());
+                    }
                     call_vision_ocr(&api_key, &encoded, mime, &settings.ocr_language).await?
                 }
                 Err(err) => {
-                    let _ = app.emit("app-log", format!("⚠️ Local OCR thread failed, falling back to cloud: {}", err));
+                    let _ = app.emit(
+                        "app-log",
+                        format!("⚠️ Local OCR thread failed, falling back to cloud: {}", err),
+                    );
                     ocr_path = "cloud_fallback";
-                    if !has_cloud_key { return Err("Local OCR failed, and no supported cloud fallback key is saved. Add a Groq gsk_ key, an xAI xai- key, or try a clearer/larger text region.".to_string()); }
+                    if !has_cloud_key {
+                        return Err("Local OCR failed, and no supported cloud fallback key is saved. Add a Groq gsk_ key, an xAI xai- key, or try a clearer/larger text region.".to_string());
+                    }
                     call_vision_ocr(&api_key, &encoded, mime, &settings.ocr_language).await?
                 }
             }
         }
         #[cfg(not(target_os = "windows"))]
         {
-            if !has_cloud_key { return Err("Cloud API key is missing or invalid. Add a Groq gsk_ key or an xAI xai- key.".to_string()); }
-        call_vision_ocr(&api_key, &encoded, mime, &settings.ocr_language).await?
+            if !has_cloud_key {
+                return Err(
+                    "Cloud API key is missing or invalid. Add a Groq gsk_ key or an xAI xai- key."
+                        .to_string(),
+                );
+            }
+            call_vision_ocr(&api_key, &encoded, mime, &settings.ocr_language).await?
         }
     } else {
-        if !has_cloud_key { return Err("Cloud API key is missing or invalid. Add a Groq gsk_ key or an xAI xai- key.".to_string()); }
+        if !has_cloud_key {
+            return Err(
+                "Cloud API key is missing or invalid. Add a Groq gsk_ key or an xAI xai- key."
+                    .to_string(),
+            );
+        }
         call_vision_ocr(&api_key, &encoded, mime, &settings.ocr_language).await?
     };
 
     let translated = if settings.translate_enabled {
-        let _ = app.emit("app-log", format!("🌐 Translating to {}...", settings.translate_target));
+        let _ = app.emit(
+            "app-log",
+            format!("🌐 Translating to {}...", settings.translate_target),
+        );
         Some(translate_text(&api_key, &original, &settings.translate_target).await?)
     } else {
         None
@@ -560,7 +698,10 @@ pub async fn run_ocr_image_bytes(
     app.clipboard()
         .write_text(final_text.clone())
         .map_err(|e| format!("Failed to write clipboard: {e}"))?;
-    runtime_log(format!("OCR text copied to clipboard: chars={}", final_text.chars().count()));
+    runtime_log(format!(
+        "OCR text copied to clipboard: chars={}",
+        final_text.chars().count()
+    ));
 
     let _ = app.emit("ocr-result", final_text.clone());
     emit_ocr_status(&app, ocr_path, started.elapsed().as_millis());
@@ -573,8 +714,14 @@ pub async fn run_quick_ocr_capture(
     settings: OcrSettings,
     api_key: String,
 ) -> Result<String, String> {
-    let _ = app.emit("ocr-status", json!({"path":"capture", "label":"Selecting region", "elapsedMs":0}));
-    let _ = app.emit("app-log", "📸 Quick OCR: drag a screen region. Press Esc to cancel the snip overlay.");
+    let _ = app.emit(
+        "ocr-status",
+        json!({"path":"capture", "label":"Selecting region", "elapsedMs":0}),
+    );
+    let _ = app.emit(
+        "app-log",
+        "📸 Quick OCR: drag a screen region. Press Esc to cancel the snip overlay.",
+    );
     capture_region_to_clipboard()?;
 
     let png_bytes = tauri::async_runtime::spawn_blocking(move || wait_clipboard_image(30_000))

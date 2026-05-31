@@ -1,10 +1,10 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::SampleFormat;
 use hound::{SampleFormat as HoundFormat, WavSpec, WavWriter};
+use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use std::io::Cursor;
 
 pub fn list_input_devices() -> Vec<String> {
     let host = cpal::default_host();
@@ -68,7 +68,8 @@ impl AudioRecorder {
         thread::spawn(move || {
             let host = cpal::default_host();
             let device = if let Some(ref name) = preferred_device {
-                host.input_devices().ok()
+                host.input_devices()
+                    .ok()
                     .and_then(|mut devs| devs.find(|d| d.name().ok().as_deref() == Some(name)))
                     .or_else(|| host.default_input_device())
             } else {
@@ -76,12 +77,18 @@ impl AudioRecorder {
             };
             let device = match device {
                 Some(dev) => dev,
-                None => { eprintln!("No input device found"); return; }
+                None => {
+                    eprintln!("No input device found");
+                    return;
+                }
             };
 
             let config = match device.default_input_config() {
                 Ok(cfg) => cfg,
-                Err(err) => { eprintln!("Failed to read input config: {err}"); return; }
+                Err(err) => {
+                    eprintln!("Failed to read input config: {err}");
+                    return;
+                }
             };
 
             let stream_config: cpal::StreamConfig = config.clone().into();
@@ -104,14 +111,18 @@ impl AudioRecorder {
                         &stream_config,
                         move |data: &[f32], _: &_| {
                             let mut wc = wc.lock().unwrap();
-                            if *wc < warmup_total { *wc += data.len(); return; }
+                            if *wc < warmup_total {
+                                *wc += data.len();
+                                return;
+                            }
                             if *rec.lock().unwrap() {
                                 buf.lock().unwrap().extend_from_slice(data);
                             }
                         },
-                        err_fn, None,
+                        err_fn,
+                        None,
                     )
-                },
+                }
                 SampleFormat::I16 => {
                     let wc = Arc::clone(&warmup_count);
                     let buf = Arc::clone(&buffer);
@@ -120,15 +131,19 @@ impl AudioRecorder {
                         &stream_config,
                         move |data: &[i16], _: &_| {
                             let mut wc = wc.lock().unwrap();
-                            if *wc < warmup_total { *wc += data.len(); return; }
+                            if *wc < warmup_total {
+                                *wc += data.len();
+                                return;
+                            }
                             if *rec.lock().unwrap() {
                                 let mut b = buf.lock().unwrap();
                                 b.extend(data.iter().map(|s| *s as f32 / i16::MAX as f32));
                             }
                         },
-                        err_fn, None,
+                        err_fn,
+                        None,
                     )
-                },
+                }
                 SampleFormat::U16 => {
                     let wc = Arc::clone(&warmup_count);
                     let buf = Arc::clone(&buffer);
@@ -137,25 +152,39 @@ impl AudioRecorder {
                         &stream_config,
                         move |data: &[u16], _: &_| {
                             let mut wc = wc.lock().unwrap();
-                            if *wc < warmup_total { *wc += data.len(); return; }
+                            if *wc < warmup_total {
+                                *wc += data.len();
+                                return;
+                            }
                             if *rec.lock().unwrap() {
                                 let mut b = buf.lock().unwrap();
-                                b.extend(data.iter().map(|s| (*s as f32 / u16::MAX as f32) * 2.0 - 1.0));
+                                b.extend(
+                                    data.iter()
+                                        .map(|s| (*s as f32 / u16::MAX as f32) * 2.0 - 1.0),
+                                );
                             }
                         },
-                        err_fn, None,
+                        err_fn,
+                        None,
                     )
-                },
-                _ => { eprintln!("Unsupported sample format"); return; }
+                }
+                _ => {
+                    eprintln!("Unsupported sample format");
+                    return;
+                }
             };
 
             let stream = match stream {
                 Ok(s) => s,
-                Err(err) => { eprintln!("Failed to build input stream: {err}"); return; }
+                Err(err) => {
+                    eprintln!("Failed to build input stream: {err}");
+                    return;
+                }
             };
 
             if let Err(err) = stream.play() {
-                eprintln!("Failed to play stream: {err}"); return;
+                eprintln!("Failed to play stream: {err}");
+                return;
             }
 
             // Keep stream alive until explicitly told to stop
@@ -186,7 +215,9 @@ impl AudioRecorder {
                 })
                 .collect()
         } else {
-            data.iter().map(|s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16).collect()
+            data.iter()
+                .map(|s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+                .collect()
         };
 
         let spec = WavSpec {

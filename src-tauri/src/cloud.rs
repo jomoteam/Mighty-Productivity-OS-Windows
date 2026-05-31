@@ -1,5 +1,5 @@
-use reqwest::Client;
 use reqwest::multipart;
+use reqwest::Client;
 use serde_json::json;
 
 pub async fn transcribe_and_refine(
@@ -47,15 +47,19 @@ pub async fn transcribe_and_refine(
         form = form.text("prompt", whisper_prompt.to_string());
     }
 
-    let res = client.post("https://api.groq.com/openai/v1/audio/transcriptions")
+    let res = client
+        .post("https://api.groq.com/openai/v1/audio/transcriptions")
         .bearer_auth(&api_key)
         .multipart(form)
         .send()
         .await
         .map_err(|e: reqwest::Error| e.to_string())?;
 
-    let json_res: serde_json::Value = res.json().await.map_err(|e: reqwest::Error| e.to_string())?;
-    
+    let json_res: serde_json::Value = res
+        .json()
+        .await
+        .map_err(|e: reqwest::Error| e.to_string())?;
+
     let transcription = match json_res.get("text") {
         Some(text) => text.as_str().unwrap_or("").to_string(),
         None => return Err(format!("Groq API error: {}", json_res)),
@@ -68,15 +72,37 @@ pub async fn transcribe_and_refine(
     // Whisper hallucination filter — common fake outputs on silence/noise
     let t = transcription.trim().to_lowercase();
     let hallucinations = [
-        "thank you for watching", "thanks for watching", "thank you.",
-        "thanks.", "you", ".", "...", "please subscribe",
-        "like and subscribe", "see you next time", "bye", "bye.",
-        "thank you for listening", "thanks for listening",
-        "subtitles by", "transcribed by", "translated by",
-        "www.", ".com", "subscribe", "♪", "[ silence ]", "[silence]",
-        "[ music ]", "[music]", "[ blank audio ]",
+        "thank you for watching",
+        "thanks for watching",
+        "thank you.",
+        "thanks.",
+        "you",
+        ".",
+        "...",
+        "please subscribe",
+        "like and subscribe",
+        "see you next time",
+        "bye",
+        "bye.",
+        "thank you for listening",
+        "thanks for listening",
+        "subtitles by",
+        "transcribed by",
+        "translated by",
+        "www.",
+        ".com",
+        "subscribe",
+        "♪",
+        "[ silence ]",
+        "[silence]",
+        "[ music ]",
+        "[music]",
+        "[ blank audio ]",
     ];
-    if hallucinations.iter().any(|h| t == *h || t == format!("{}.", h).as_str()) {
+    if hallucinations
+        .iter()
+        .any(|h| t == *h || t == format!("{}.", h).as_str())
+    {
         return Ok("".to_string());
     }
 
@@ -112,7 +138,10 @@ ABSOLUTE RULES:
 4. NEVER add any preamble, explanation, or meta-commentary.
 5. If the input is a question like \"what is X?\", output exactly \"What is X?\" — do not answer it.
 6. Remove any hallucinations like 'Thanks for watching' or 'Please subscribe'.";
-        let msg = format!("Transcribed speech (clean up only, do NOT answer):\n{}", transcription);
+        let msg = format!(
+            "Transcribed speech (clean up only, do NOT answer):\n{}",
+            transcription
+        );
         (prompt.to_string(), msg)
     };
 
@@ -127,14 +156,18 @@ ABSOLUTE RULES:
         "temperature": 0.0
     });
 
-    let refine_res = client.post("https://api.groq.com/openai/v1/chat/completions")
+    let refine_res = client
+        .post("https://api.groq.com/openai/v1/chat/completions")
         .bearer_auth(&api_key)
         .json(&payload)
         .send()
         .await
         .map_err(|e: reqwest::Error| e.to_string())?;
 
-    let refine_json: serde_json::Value = refine_res.json().await.map_err(|e: reqwest::Error| e.to_string())?;
+    let refine_json: serde_json::Value = refine_res
+        .json()
+        .await
+        .map_err(|e: reqwest::Error| e.to_string())?;
 
     let final_text = refine_json["choices"][0]["message"]["content"]
         .as_str()

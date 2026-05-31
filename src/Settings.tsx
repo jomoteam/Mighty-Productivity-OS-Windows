@@ -370,7 +370,7 @@ export default function Settings() {
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center text-lg">🎙</div>
             <div>
-              <h1 className="text-white font-semibold text-lg leading-tight">Mighty Productivity OS for Windows</h1>
+              <h1 className="text-white font-semibold text-lg leading-tight">Mighty-Productivity-OS-Windows</h1>
               <p className="text-white/40 text-xs">Settings {version && <span className="text-white/20">v{version}</span>}</p>
             </div>
           </div>

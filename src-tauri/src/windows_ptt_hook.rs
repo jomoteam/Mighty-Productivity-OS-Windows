@@ -5,8 +5,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_SHIFT, VK_SPACE};
-use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_MENU, VK_RCONTROL, VK_RMENU,
+    VK_RSHIFT, VK_SHIFT, VK_SPACE,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
+    KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+};
 
 #[derive(Clone, Debug)]
 struct HotkeySpec {
@@ -18,7 +24,12 @@ struct HotkeySpec {
 
 impl Default for HotkeySpec {
     fn default() -> Self {
-        Self { ctrl: true, alt: false, shift: true, key_vk: VK_SPACE.0 as u32 }
+        Self {
+            ctrl: true,
+            alt: false,
+            shift: true,
+            key_vk: VK_SPACE.0 as u32,
+        }
     }
 }
 
@@ -36,16 +47,18 @@ struct HookState {
 static STATE: OnceLock<Mutex<HookState>> = OnceLock::new();
 
 fn state() -> &'static Mutex<HookState> {
-    STATE.get_or_init(|| Mutex::new(HookState {
-        tx: None,
-        spec: HotkeySpec::default(),
-        active: false,
-        active_since: None,
-        last_trigger_down_at: None,
-        released_samples: 0,
-        suppress_until_released: false,
-        installed: false,
-    }))
+    STATE.get_or_init(|| {
+        Mutex::new(HookState {
+            tx: None,
+            spec: HotkeySpec::default(),
+            active: false,
+            active_since: None,
+            last_trigger_down_at: None,
+            released_samples: 0,
+            suppress_until_released: false,
+            installed: false,
+        })
+    })
 }
 
 fn is_down(vk: i32) -> bool {
@@ -53,14 +66,22 @@ fn is_down(vk: i32) -> bool {
 }
 
 fn mods_match(spec: &HotkeySpec) -> bool {
-    let ctrl = is_down(VK_CONTROL.0 as i32) || is_down(VK_LCONTROL.0 as i32) || is_down(VK_RCONTROL.0 as i32);
+    let ctrl = is_down(VK_CONTROL.0 as i32)
+        || is_down(VK_LCONTROL.0 as i32)
+        || is_down(VK_RCONTROL.0 as i32);
     let alt = is_down(VK_MENU.0 as i32) || is_down(VK_LMENU.0 as i32) || is_down(VK_RMENU.0 as i32);
-    let shift = is_down(VK_SHIFT.0 as i32) || is_down(VK_LSHIFT.0 as i32) || is_down(VK_RSHIFT.0 as i32);
+    let shift =
+        is_down(VK_SHIFT.0 as i32) || is_down(VK_LSHIFT.0 as i32) || is_down(VK_RSHIFT.0 as i32);
     (!spec.ctrl || ctrl) && (!spec.alt || alt) && (!spec.shift || shift)
 }
 
 fn parse_hotkey(value: &str) -> HotkeySpec {
-    let mut spec = HotkeySpec { ctrl: false, alt: false, shift: false, key_vk: VK_SPACE.0 as u32 };
+    let mut spec = HotkeySpec {
+        ctrl: false,
+        alt: false,
+        shift: false,
+        key_vk: VK_SPACE.0 as u32,
+    };
     for part in value.split('+').map(|p| p.trim().to_ascii_lowercase()) {
         match part.as_str() {
             "cmdorctrl" | "ctrl" | "control" => spec.ctrl = true,
@@ -69,8 +90,12 @@ fn parse_hotkey(value: &str) -> HotkeySpec {
             "space" => spec.key_vk = VK_SPACE.0 as u32,
             s if s.len() == 1 => {
                 let ch = s.as_bytes()[0];
-                if ch.is_ascii_alphabetic() { spec.key_vk = ch.to_ascii_uppercase() as u32; }
-                if ch.is_ascii_digit() { spec.key_vk = ch as u32; }
+                if ch.is_ascii_alphabetic() {
+                    spec.key_vk = ch.to_ascii_uppercase() as u32;
+                }
+                if ch.is_ascii_digit() {
+                    spec.key_vk = ch as u32;
+                }
             }
             _ => {}
         }
@@ -114,7 +139,9 @@ fn stop_if_trigger_released() -> bool {
             st.released_samples = 0;
             st.suppress_until_released = true;
             crate::ocr::runtime_log("voice hotkey watchdog: trigger released, stopping recording");
-            if let Some(tx) = &st.tx { let _ = tx.try_send(false); }
+            if let Some(tx) = &st.tx {
+                let _ = tx.try_send(false);
+            }
             return true;
         }
 
@@ -151,7 +178,9 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                     st.released_samples = 0;
                     st.suppress_until_released = false;
                     crate::ocr::runtime_log("voice hotkey pressed: starting recording");
-                    if let Some(tx) = &st.tx { let _ = tx.try_send(true); }
+                    if let Some(tx) = &st.tx {
+                        let _ = tx.try_send(true);
+                    }
                     return LRESULT(1);
                 }
                 if is_key_down && st.active {
@@ -168,7 +197,10 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                         return LRESULT(1);
                     }
                     // Also ignore ultra-fast bounce right after activation.
-                    if st.active_since.is_some_and(|started| started.elapsed() < Duration::from_millis(300)) {
+                    if st
+                        .active_since
+                        .is_some_and(|started| started.elapsed() < Duration::from_millis(300))
+                    {
                         return LRESULT(1);
                     }
                     st.active = false;
@@ -176,7 +208,9 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                     st.last_trigger_down_at = None;
                     st.released_samples = 0;
                     crate::ocr::runtime_log("voice hotkey released: stopping recording");
-                    if let Some(tx) = &st.tx { let _ = tx.try_send(false); }
+                    if let Some(tx) = &st.tx {
+                        let _ = tx.try_send(false);
+                    }
                     return LRESULT(1);
                 }
             }
@@ -190,7 +224,9 @@ pub fn start(tx: mpsc::Sender<bool>, hotkey: &str) {
         let mut st = state().lock().unwrap();
         st.tx = Some(tx);
         st.spec = parse_hotkey(hotkey);
-        if st.installed { return; }
+        if st.installed {
+            return;
+        }
         st.installed = true;
     }
 
