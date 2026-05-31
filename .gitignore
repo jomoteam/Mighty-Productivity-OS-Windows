@@ -52,3 +52,6 @@ LAUNCH_DEBUG_LOG.txt
 
 NUL
 **/NUL
+
+# Accidental duplicate local project copy
+DictationApp/
