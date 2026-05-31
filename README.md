@@ -24,3 +24,15 @@ npm run tauri build
 ## Windows
 
 This app targets Windows and packages through Tauri.
+## API keys
+
+Do not commit real API keys to this repository.
+
+For local development, copy `.env.example` to `.env` and set:
+
+```bash
+GROQ_API_KEY=your_local_key_here
+```
+
+For the installed Windows app, the Groq key is stored locally by the app settings flow, not in git.
+
