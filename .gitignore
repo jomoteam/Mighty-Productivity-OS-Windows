@@ -1,0 +1,54 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+# Tauri / Rust build outputs
+src-tauri/target/
+**/target/
+# Local secrets / runtime state
+.env
+.env.*
+!.env.example
+*api_key*.txt
+*API_KEY*.txt
+groq_api_key.txt
+# Local build/install/debug handoff logs/status files
+*.bak
+*.backup*
+*.exe.backup*
+AUTO_INSTALL_LOG.txt
+*_LOG.txt
+*_STATUS.txt
+*_PROGRESS.txt
+CURRENT_PROGRESS_*.txt
+DEBUG_*.txt
+TRY_*.txt
+REINSTALL_NOW_LOG.txt
+FIXED_DEBUG_INSTALL_LOG.txt
+INSTALLED_FIXED_LAUNCH.log
+LAUNCH_DEBUG_LOG.txt
+*.log
+
+
+NUL
+**/NUL
