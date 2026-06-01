@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Mighty-Productivity-OS-Windows",
+  "productName": "Mighty Voice OS",
   "version": "0.4.0",
-  "identifier": "com.jomoteam.mightyproductivityoswindows",
+  "identifier": "com.kenneth.dictationapp",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Mighty-Productivity-OS-Windows v0.4.0",
+        "title": "Mighty Voice OS v0.4.0",
         "width": 560,
         "height": 660,
         "minWidth": 400,

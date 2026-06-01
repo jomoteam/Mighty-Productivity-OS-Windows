@@ -10,9 +10,6 @@ type RecordingMode = 'push_to_talk' | 'hands_free' | 'command';
 type OcrCopyMode = 'original' | 'translated' | 'both';
 type OcrImageFormat = 'png' | 'jpeg';
 
-const isSupportedApiKey = (value: string) => value.startsWith('gsk_') || value.startsWith('xai-');
-const apiKeyProviderLabel = (value: string) => value.startsWith('xai-') ? 'xAI' : value.startsWith('gsk_') ? 'Groq' : 'API';
-
 interface OcrStatus {
   path: string;
   label: string;
@@ -101,7 +98,7 @@ export default function Settings() {
 
     const trimmedStoredApiKey = storedApiKey.trim();
     if (trimmedStoredApiKey) {
-      if (isSupportedApiKey(trimmedStoredApiKey)) {
+      if (trimmedStoredApiKey.startsWith('gsk_')) {
         setApiKey(trimmedStoredApiKey);
         invoke('set_api_key', { apiKey: trimmedStoredApiKey }).catch(console.error);
         setApiKeySaved(true);
@@ -109,7 +106,7 @@ export default function Settings() {
         localStorage.removeItem('mightyvoice.apiKey');
         setApiKey('');
         setApiKeySaved(false);
-        setAppError('Removed an incompatible saved API key. Mighty Productivity OS accepts Groq keys starting with gsk_ or xAI keys starting with xai-.');
+        setAppError('Removed an incompatible saved API key. Mighty Voice needs a Groq key starting with gsk_; xAI keys are not sent to Groq.');
       }
     }
     if (storedMode && ['push_to_talk', 'hands_free', 'command'].includes(storedMode)) setRecordingMode(storedMode);
@@ -122,7 +119,7 @@ export default function Settings() {
       try {
         const parsed = JSON.parse(storedOcrSettings) as OcrSettings;
         const savedKey = storedApiKey.trim();
-        setOcrSettings({ ...parsed, speedMode: isSupportedApiKey(savedKey) ? parsed.speedMode : 'local' });
+        setOcrSettings({ ...parsed, speedMode: savedKey.startsWith('gsk_') ? parsed.speedMode : 'local' });
       } catch {}
     }
 
@@ -340,9 +337,9 @@ export default function Settings() {
 
   const applyApiKey = async () => {
     const trimmed = apiKey.trim();
-    if (trimmed && !isSupportedApiKey(trimmed)) {
+    if (trimmed && !trimmed.startsWith('gsk_')) {
       setApiKeySaved(false);
-      setAppError('Use a Groq key starting with gsk_ or an xAI key starting with xai-. Local OCR still works without a key.');
+      setAppError('This app currently expects a Groq key starting with gsk_. xAI keys are not supported yet. Local OCR still works without a key.');
       return;
     }
 
@@ -352,7 +349,7 @@ export default function Settings() {
       setApiKey(trimmed);
       setApiKeySaved(true);
       invoke<ApiKeyStatus>('get_api_key_status').then(setApiKeyStatus).catch(console.error);
-      setAppError(trimmed ? `${apiKeyProviderLabel(trimmed)} API key saved.` : 'API key cleared. Local OCR still works without a key.');
+      setAppError(trimmed ? 'Groq API key saved.' : 'Groq API key cleared. Local OCR still works without a key.');
     } catch (e) {
       setApiKeySaved(false);
       setAppError(`Failed to save API key: ${String(e)}`);
@@ -370,7 +367,7 @@ export default function Settings() {
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center text-lg">🎙</div>
             <div>
-              <h1 className="text-white font-semibold text-lg leading-tight">Mighty-Productivity-OS-Windows</h1>
+              <h1 className="text-white font-semibold text-lg leading-tight">Mighty Voice OS</h1>
               <p className="text-white/40 text-xs">Settings {version && <span className="text-white/20">v{version}</span>}</p>
             </div>
           </div>
@@ -594,14 +591,14 @@ export default function Settings() {
         {/* API Key */}
         <section>
           <label className="text-white/40 text-xs font-medium uppercase tracking-wider mb-2 flex items-center gap-1.5">
-            <Key size={12} /> API Key
+            <Key size={12} /> Groq API Key
           </label>
           <div className="flex gap-2">
             <input
               type="password"
               value={apiKey}
               onChange={e => { setApiKey(e.target.value); setApiKeySaved(false); }}
-              placeholder="gsk_... or xai-..."
+              placeholder="gsk_..."
               className="min-w-0 flex-1 bg-white/5 border border-white/8 rounded-2xl px-4 py-3 text-white/80 text-sm placeholder:text-white/20 focus:outline-none focus:border-white/20"
             />
             <button
@@ -620,11 +617,11 @@ export default function Settings() {
           {apiKeyStatus && !apiKeyStatus.hasKey && (
             <p className="mt-1.5 text-[10px] text-white/20 flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-white/15 inline-block" />
-              No cloud API key detected
+              No Groq key detected
             </p>
           )}
           <p className="mt-2 text-[11px] leading-relaxed text-white/35">
-            Accepts Groq keys starting with gsk_ and xAI keys starting with xai-. Local OCR works without a key. Voice transcription still requires a Groq audio key; xAI is used for supported chat/vision cloud features.
+            Voice transcription and cloud OCR use Groq keys that start with gsk_. xAI keys are not supported yet. Local OCR works without a key.
           </p>
         </section>
 

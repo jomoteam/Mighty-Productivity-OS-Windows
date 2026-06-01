@@ -1,18 +1,20 @@
-use crate::ocr::OcrSettings;
-use ab_glyph::{FontArc, PxScale};
-use imageproc::drawing::draw_text_mut;
-use serde::{Deserialize, Serialize};
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-use std::sync::Arc;
-use std::sync::Mutex;
+use tauri::{Emitter, Manager};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Emitter, Manager};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState, Shortcut};
 use tauri_plugin_clipboard_manager::ClipboardExt;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
+use std::sync::Arc;
+use std::sync::Mutex;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
+use windows::Win32::Graphics::Dwm::DwmFlush;
+use crate::ocr::OcrSettings;
+use serde::{Deserialize, Serialize};
+use ab_glyph::{FontArc, PxScale};
+use imageproc::drawing::draw_text_mut;
 
 struct AppState {
     recording_mode: Mutex<String>,
@@ -31,38 +33,13 @@ fn persisted_api_key_path() -> std::path::PathBuf {
     let base = std::env::var("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir());
-    base.join("Mighty-Productivity-OS-Windows")
-        .join("api_key.txt")
-}
-
-fn is_supported_api_key(api_key: &str) -> bool {
-    api_key.starts_with("gsk_") || api_key.starts_with("xai-")
-}
-
-fn api_key_provider(api_key: &str) -> &'static str {
-    if api_key.starts_with("gsk_") {
-        "groq"
-    } else if api_key.starts_with("xai-") {
-        "xai"
-    } else {
-        "none"
-    }
+    base.join("Mighty Voice OS").join("groq_api_key.txt")
 }
 
 fn load_persisted_api_key() -> String {
-    let from_groq_env = std::env::var("GROQ_API_KEY")
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    if is_supported_api_key(&from_groq_env) {
-        return from_groq_env;
-    }
-    let from_xai_env = std::env::var("XAI_API_KEY")
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    if is_supported_api_key(&from_xai_env) {
-        return from_xai_env;
+    let from_env = std::env::var("GROQ_API_KEY").unwrap_or_default().trim().to_string();
+    if from_env.starts_with("gsk_") {
+        return from_env;
     }
     std::fs::read_to_string(persisted_api_key_path())
         .unwrap_or_default()
@@ -80,23 +57,13 @@ struct ApiKeyStatus {
 
 #[tauri::command]
 fn get_api_key_status(state: tauri::State<AppState>) -> ApiKeyStatus {
-    let from_groq_env = std::env::var("GROQ_API_KEY")
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    let from_xai_env = std::env::var("XAI_API_KEY")
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    let from_env = std::env::var("GROQ_API_KEY").unwrap_or_default().trim().to_string();
     let path = persisted_api_key_path();
-    let from_file = std::fs::read_to_string(&path)
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    let from_file = std::fs::read_to_string(&path).unwrap_or_default().trim().to_string();
     let current = state.api_key.lock().map(|k| k.clone()).unwrap_or_default();
-    let has_env = is_supported_api_key(&from_groq_env) || is_supported_api_key(&from_xai_env);
-    let has_file = is_supported_api_key(&from_file);
-    let has_current = is_supported_api_key(current.trim());
+    let has_env = from_env.starts_with("gsk_");
+    let has_file = from_file.starts_with("gsk_");
+    let has_current = current.trim().starts_with("gsk_");
     let source = if has_env {
         "environment"
     } else if has_file {
@@ -115,20 +82,16 @@ fn get_api_key_status(state: tauri::State<AppState>) -> ApiKeyStatus {
 
 #[tauri::command]
 fn set_app_state(state: tauri::State<AppState>, recording_mode: String, language: String) {
-    if let Ok(mut mode) = state.recording_mode.lock() {
-        *mode = recording_mode;
-    }
-    if let Ok(mut lang) = state.language.lock() {
-        *lang = language;
-    }
+    if let Ok(mut mode) = state.recording_mode.lock() { *mode = recording_mode; }
+    if let Ok(mut lang) = state.language.lock() { *lang = language; }
 }
 
 #[tauri::command]
 fn set_api_key(state: tauri::State<AppState>, api_key: String) -> Result<(), String> {
     let api_key = api_key.trim().to_string();
-    if !api_key.is_empty() && !is_supported_api_key(&api_key) {
-        crate::ocr::runtime_log("API key rejected: unsupported provider prefix");
-        return Err("Mighty-Productivity-OS-Windows accepts Groq keys starting with gsk_ or xAI keys starting with xai-.".to_string());
+    if !api_key.is_empty() && !api_key.starts_with("gsk_") {
+        crate::ocr::runtime_log("Groq API key rejected: incompatible prefix");
+        return Err("Mighty Voice currently uses Groq for voice transcription. Save a Groq key starting with gsk_, or clear the field. xAI keys cannot be sent to Groq.".to_string());
     }
 
     if let Ok(mut key) = state.api_key.lock() {
@@ -141,11 +104,10 @@ fn set_api_key(state: tauri::State<AppState>, api_key: String) -> Result<(), Str
     }
     if api_key.is_empty() {
         let _ = std::fs::remove_file(&path);
-        crate::ocr::runtime_log("API key cleared");
+        crate::ocr::runtime_log("Groq API key cleared");
     } else {
-        let provider = api_key_provider(&api_key);
-        std::fs::write(&path, api_key).map_err(|e| format!("Failed to persist API key: {e}"))?;
-        crate::ocr::runtime_log(format!("API key saved: valid {provider} key present"));
+        std::fs::write(&path, api_key).map_err(|e| format!("Failed to persist Groq API key: {e}"))?;
+        crate::ocr::runtime_log("Groq API key saved: valid Groq key present");
     }
     Ok(())
 }
@@ -157,13 +119,10 @@ fn list_input_devices() -> Vec<String> {
 
 #[tauri::command]
 fn set_input_device(state: tauri::State<AppState>, device_name: String) {
-    let name = if device_name.is_empty() {
-        None
-    } else {
-        Some(device_name)
-    };
+    let name = if device_name.is_empty() { None } else { Some(device_name) };
     state.audio_recorder.set_preferred_device(name);
 }
+
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -181,11 +140,9 @@ fn ps_quote(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+
 #[derive(Debug, Deserialize, Clone, Copy)]
-struct AnnotationPoint {
-    x: f64,
-    y: f64,
-}
+struct AnnotationPoint { x: f64, y: f64 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -193,38 +150,18 @@ enum ScreenshotAnnotation {
     #[serde(rename = "pen")]
     Pen { points: Vec<AnnotationPoint> },
     #[serde(rename = "rect")]
-    Rect {
-        start: AnnotationPoint,
-        end: AnnotationPoint,
-    },
+    Rect { start: AnnotationPoint, end: AnnotationPoint },
     #[serde(rename = "arrow")]
-    Arrow {
-        start: AnnotationPoint,
-        end: AnnotationPoint,
-    },
+    Arrow { start: AnnotationPoint, end: AnnotationPoint },
     #[serde(rename = "text")]
-    Text {
-        point: AnnotationPoint,
-        text: String,
-    },
+    Text { point: AnnotationPoint, text: String },
     #[serde(rename = "blur")]
-    Blur {
-        start: AnnotationPoint,
-        end: AnnotationPoint,
-    },
+    Blur { start: AnnotationPoint, end: AnnotationPoint },
     #[serde(rename = "pixelate")]
-    Pixelate {
-        start: AnnotationPoint,
-        end: AnnotationPoint,
-    },
+    Pixelate { start: AnnotationPoint, end: AnnotationPoint },
 }
 
-fn draw_line_rgba(
-    img: &mut image::RgbaImage,
-    a: AnnotationPoint,
-    b: AnnotationPoint,
-    color: image::Rgba<u8>,
-) {
+fn draw_line_rgba(img: &mut image::RgbaImage, a: AnnotationPoint, b: AnnotationPoint, color: image::Rgba<u8>) {
     let (mut x0, mut y0) = (a.x.round() as i32, a.y.round() as i32);
     let (x1, y1) = (b.x.round() as i32, b.y.round() as i32);
     let dx = (x1 - x0).abs();
@@ -233,51 +170,31 @@ fn draw_line_rgba(
     let sy = if y0 < y1 { 1 } else { -1 };
     let mut err = dx + dy;
     loop {
-        for ox in -1..=1 {
-            for oy in -1..=1 {
-                let x = x0 + ox;
-                let y = y0 + oy;
-                if x >= 0 && y >= 0 && (x as u32) < img.width() && (y as u32) < img.height() {
-                    img.put_pixel(x as u32, y as u32, color);
-                }
+        for ox in -1..=1 { for oy in -1..=1 {
+            let x = x0 + ox; let y = y0 + oy;
+            if x >= 0 && y >= 0 && (x as u32) < img.width() && (y as u32) < img.height() {
+                img.put_pixel(x as u32, y as u32, color);
             }
-        }
-        if x0 == x1 && y0 == y1 {
-            break;
-        }
+        }}
+        if x0 == x1 && y0 == y1 { break; }
         let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x0 += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y0 += sy;
-        }
+        if e2 >= dy { err += dy; x0 += sx; }
+        if e2 <= dx { err += dx; y0 += sy; }
     }
 }
 
-fn normalize_pixel_rect(
-    start: AnnotationPoint,
-    end: AnnotationPoint,
-    img_w: u32,
-    img_h: u32,
-) -> Option<(u32, u32, u32, u32)> {
+fn normalize_pixel_rect(start: AnnotationPoint, end: AnnotationPoint, img_w: u32, img_h: u32) -> Option<(u32, u32, u32, u32)> {
     let x0 = start.x.min(end.x).floor().max(0.0) as i32;
     let y0 = start.y.min(end.y).floor().max(0.0) as i32;
     let x1 = start.x.max(end.x).ceil().min(img_w as f64) as i32;
     let y1 = start.y.max(end.y).ceil().min(img_h as f64) as i32;
-    if x1 - x0 < 2 || y1 - y0 < 2 {
-        return None;
-    }
+    if x1 - x0 < 2 || y1 - y0 < 2 { return None; }
     Some((x0 as u32, y0 as u32, x1 as u32, y1 as u32))
 }
 
 fn apply_blur_rect(img: &mut image::RgbaImage, start: AnnotationPoint, end: AnnotationPoint) {
     let (w, h) = (img.width(), img.height());
-    let Some((x0, y0, x1, y1)) = normalize_pixel_rect(start, end, w, h) else {
-        return;
-    };
+    let Some((x0, y0, x1, y1)) = normalize_pixel_rect(start, end, w, h) else { return; };
     let src = img.clone();
     let radius: i32 = 6;
     for y in y0..y1 {
@@ -301,20 +218,14 @@ fn apply_blur_rect(img: &mut image::RgbaImage, start: AnnotationPoint, end: Anno
                     c += 1;
                 }
             }
-            img.put_pixel(
-                x,
-                y,
-                image::Rgba([(r / c) as u8, (g / c) as u8, (b / c) as u8, (a / c) as u8]),
-            );
+            img.put_pixel(x, y, image::Rgba([(r / c) as u8, (g / c) as u8, (b / c) as u8, (a / c) as u8]));
         }
     }
 }
 
 fn apply_pixelate_rect(img: &mut image::RgbaImage, start: AnnotationPoint, end: AnnotationPoint) {
     let (w, h) = (img.width(), img.height());
-    let Some((x0, y0, x1, y1)) = normalize_pixel_rect(start, end, w, h) else {
-        return;
-    };
+    let Some((x0, y0, x1, y1)) = normalize_pixel_rect(start, end, w, h) else { return; };
     let src = img.clone();
     let block: u32 = 12;
     let mut by = y0;
@@ -368,13 +279,8 @@ fn load_annotation_font() -> Option<FontArc> {
     None
 }
 
-fn apply_screenshot_annotations(
-    path: &std::path::Path,
-    annotations: &[ScreenshotAnnotation],
-) -> Result<(), String> {
-    if annotations.is_empty() {
-        return Ok(());
-    }
+fn apply_screenshot_annotations(path: &std::path::Path, annotations: &[ScreenshotAnnotation]) -> Result<(), String> {
+    if annotations.is_empty() { return Ok(()); }
     let mut img = image::open(path)
         .map_err(|e| format!("Failed to load screenshot for annotations: {e}"))?
         .to_rgba8();
@@ -383,35 +289,22 @@ fn apply_screenshot_annotations(
     for ann in annotations {
         match ann {
             ScreenshotAnnotation::Pen { points } => {
-                for pair in points.windows(2) {
-                    draw_line_rgba(&mut img, pair[0], pair[1], green);
-                }
+                for pair in points.windows(2) { draw_line_rgba(&mut img, pair[0], pair[1], green); }
             }
             ScreenshotAnnotation::Rect { start, end } => {
                 let p1 = *start;
-                let p2 = AnnotationPoint {
-                    x: end.x,
-                    y: start.y,
-                };
+                let p2 = AnnotationPoint { x: end.x, y: start.y };
                 let p3 = *end;
-                let p4 = AnnotationPoint {
-                    x: start.x,
-                    y: end.y,
-                };
-                draw_line_rgba(&mut img, p1, p2, green);
-                draw_line_rgba(&mut img, p2, p3, green);
-                draw_line_rgba(&mut img, p3, p4, green);
-                draw_line_rgba(&mut img, p4, p1, green);
+                let p4 = AnnotationPoint { x: start.x, y: end.y };
+                draw_line_rgba(&mut img, p1, p2, green); draw_line_rgba(&mut img, p2, p3, green);
+                draw_line_rgba(&mut img, p3, p4, green); draw_line_rgba(&mut img, p4, p1, green);
             }
             ScreenshotAnnotation::Arrow { start, end } => {
                 draw_line_rgba(&mut img, *start, *end, green);
                 let angle = (end.y - start.y).atan2(end.x - start.x);
                 let len = 14.0;
                 for delta in [2.6_f64, -2.6_f64] {
-                    let p = AnnotationPoint {
-                        x: end.x - len * (angle + delta).cos(),
-                        y: end.y - len * (angle + delta).sin(),
-                    };
+                    let p = AnnotationPoint { x: end.x - len * (angle + delta).cos(), y: end.y - len * (angle + delta).sin() };
                     draw_line_rgba(&mut img, *end, p, green);
                 }
             }
@@ -428,44 +321,33 @@ fn apply_screenshot_annotations(
                             text,
                         );
                     } else {
-                        let end = AnnotationPoint {
-                            x: point.x + (text.len().max(1) as f64 * 8.0),
-                            y: point.y,
-                        };
+                        let end = AnnotationPoint { x: point.x + (text.len().max(1) as f64 * 8.0), y: point.y };
                         draw_line_rgba(&mut img, *point, end, green);
                     }
                 }
             }
             ScreenshotAnnotation::Blur { start, end } => apply_blur_rect(&mut img, *start, *end),
-            ScreenshotAnnotation::Pixelate { start, end } => {
-                apply_pixelate_rect(&mut img, *start, *end)
-            }
+            ScreenshotAnnotation::Pixelate { start, end } => apply_pixelate_rect(&mut img, *start, *end),
         }
     }
-    img.save(path)
-        .map_err(|e| format!("Failed to save annotated screenshot: {e}"))?;
+    img.save(path).map_err(|e| format!("Failed to save annotated screenshot: {e}"))?;
     Ok(())
 }
 
-fn capture_screen_region_to_png(
-    rect: &ScreenshotRect,
-    output_path: &std::path::Path,
-    copy_to_clipboard: bool,
-) -> Result<(), String> {
-    crate::ocr::runtime_log(format!(
-        "capture_screen_region_to_png rect x={} y={} w={} h={} copy={}",
-        rect.x, rect.y, rect.width, rect.height, copy_to_clipboard
-    ));
+fn capture_screen_region_to_png(rect: &ScreenshotRect, output_path: &std::path::Path, copy_to_clipboard: bool) -> Result<(), String> {
+    crate::ocr::runtime_log(format!("capture_screen_region_to_png rect x={} y={} w={} h={} copy={}", rect.x, rect.y, rect.width, rect.height, copy_to_clipboard));
+
+    // Flush the DWM compositor so the desktop is fully repainted before we
+    // capture. Without this, hiding the always-on-top overlay 180ms ago can
+    // leave a stale frame where the underlying window z-order is wrong.
+    #[cfg(target_os = "windows")]
+    { let _ = unsafe { DwmFlush() }; }
     if rect.width < 8.0 || rect.height < 8.0 {
         crate::ocr::runtime_log("capture_screen_region_to_png rejected: selection too small");
         return Err("Selection too small — drag a larger area.".to_string());
     }
     let path = ps_quote(&output_path.to_string_lossy());
-    let set_clipboard = if copy_to_clipboard {
-        "$clip.SetImage($bmp);"
-    } else {
-        ""
-    };
+    let set_clipboard = if copy_to_clipboard { "$clip.SetImage($bmp);" } else { "" };
     let ps = format!(
         "$ErrorActionPreference='Stop'; \
 Add-Type -AssemblyName System.Windows.Forms; \
@@ -486,16 +368,7 @@ $bmp.Dispose();",
         set_clipboard = set_clipboard,
     );
     let mut command = std::process::Command::new("powershell.exe");
-    command.args([
-        "-NoProfile",
-        "-NonInteractive",
-        "-WindowStyle",
-        "Hidden",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        &ps,
-    ]);
+    command.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", &ps]);
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
     let output = command
@@ -504,18 +377,12 @@ $bmp.Dispose();",
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
         crate::ocr::runtime_log(format!("screenshot capture PowerShell failed: {}", err));
-        return Err(if err.is_empty() {
-            "Screenshot capture failed".to_string()
-        } else {
-            err
-        });
+        return Err(if err.is_empty() { "Screenshot capture failed".to_string() } else { err });
     }
-    crate::ocr::runtime_log(format!(
-        "screenshot capture PowerShell ok: {}",
-        output_path.display()
-    ));
+    crate::ocr::runtime_log(format!("screenshot capture PowerShell ok: {}", output_path.display()));
     Ok(())
 }
+
 
 fn capture_png_file_to_clipboard(path: &std::path::Path) -> Result<(), String> {
     let path = ps_quote(&path.to_string_lossy());
@@ -524,29 +391,14 @@ fn capture_png_file_to_clipboard(path: &std::path::Path) -> Result<(), String> {
         path = path,
     );
     let mut command = std::process::Command::new("powershell.exe");
-    command.args([
-        "-NoProfile",
-        "-NonInteractive",
-        "-WindowStyle",
-        "Hidden",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        &ps,
-    ]);
+    command.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", &ps]);
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
-    let output = command
-        .output()
-        .map_err(|e| format!("Failed to copy image: {e}"))?;
+    let output = command.output().map_err(|e| format!("Failed to copy image: {e}"))?;
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
         crate::ocr::runtime_log(format!("copy image PowerShell failed: {}", err));
-        return Err(if err.is_empty() {
-            "Copy image failed".to_string()
-        } else {
-            err
-        });
+        return Err(if err.is_empty() { "Copy image failed".to_string() } else { err });
     }
     crate::ocr::runtime_log("copy image PowerShell ok");
     Ok(())
@@ -574,11 +426,7 @@ fn open_screenshot_overlay_with_mode(app: &tauri::AppHandle, mode: &str) -> Resu
     let _ = w.eval(&mode_script);
     let _ = app.emit("screenshot-overlay-mode", mode);
     let _ = w.emit("screenshot-overlay-mode", mode);
-    let _ = w.set_title(if mode == "ocr" {
-        "Mighty OCR"
-    } else {
-        "Mighty Screenshot"
-    });
+    let _ = w.set_title(if mode == "ocr" { "Mighty OCR" } else { "Mighty Screenshot" });
     let _ = w.set_fullscreen(true);
     let _ = w.show();
     let _ = w.set_focus();
@@ -621,19 +469,18 @@ async fn screenshot_overlay_action(
     path.push(format!("mightyvoice_screenshot_{}.png", ts));
 
     // Hide the overlay before capturing so the screenshot contains the user's screen,
-    // not Mighty Productivity OS's green selection box. The short delay lets DWM repaint.
+    // not Mighty Voice's green selection box. The short delay lets DWM repaint.
     if let Some(w) = app.get_webview_window("screenshot_overlay") {
         let _ = w.hide();
     }
-    std::thread::sleep(std::time::Duration::from_millis(180));
+    // Wait for DWM to recompose the desktop. Shorter delays can leave
+    // stale z-order where the wrong window appears on top in captures.
+    std::thread::sleep(std::time::Duration::from_millis(400));
     let parsed_annotations: Vec<ScreenshotAnnotation> = annotations
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
 
-    crate::ocr::runtime_log(format!(
-        "screenshot_overlay_action action={} rect={}x{} at {},{}",
-        action, rect.width, rect.height, rect.x, rect.y
-    ));
+    crate::ocr::runtime_log(format!("screenshot_overlay_action action={} rect={}x{} at {},{}", action, rect.width, rect.height, rect.x, rect.y));
     match action.as_str() {
         "copy" => {
             capture_screen_region_to_png(&rect, &path, false)?;
@@ -652,17 +499,12 @@ async fn screenshot_overlay_action(
         "ocr" => {
             capture_screen_region_to_png(&rect, &path, false)?;
             apply_screenshot_annotations(&path, &parsed_annotations)?;
-            let bytes =
-                std::fs::read(&path).map_err(|e| format!("Failed to read screenshot: {e}"))?;
+            let bytes = std::fs::read(&path).map_err(|e| format!("Failed to read screenshot: {e}"))?;
             let _ = std::fs::remove_file(&path);
             let settings = state.ocr_settings.lock().unwrap().clone();
             let api_key = state.api_key.lock().unwrap().clone();
             let text = ocr::run_ocr_image_bytes(app.clone(), bytes, settings, api_key).await?;
-            Ok(if text.trim().is_empty() {
-                "OCR finished".to_string()
-            } else {
-                "OCR text copied".to_string()
-            })
+            Ok(if text.trim().is_empty() { "OCR finished".to_string() } else { "OCR text copied".to_string() })
         }
         _ => Err("Unknown screenshot action".to_string()),
     }
@@ -678,15 +520,9 @@ fn unregister_hotkey(app: tauri::AppHandle, state: tauri::State<AppState>) -> Re
 }
 
 #[tauri::command]
-fn update_hotkey(
-    app: tauri::AppHandle,
-    state: tauri::State<AppState>,
-    new_hotkey: String,
-) -> Result<(), String> {
+fn update_hotkey(app: tauri::AppHandle, state: tauri::State<AppState>, new_hotkey: String) -> Result<(), String> {
     let mut current = state.current_hotkey.lock().unwrap();
-    if *current == new_hotkey {
-        return Ok(());
-    }
+    if *current == new_hotkey { return Ok(()); }
 
     #[cfg(target_os = "windows")]
     {
@@ -697,24 +533,20 @@ fn update_hotkey(
 
     #[cfg(not(target_os = "windows"))]
     {
-        if let Ok(old_sc) = current.parse::<Shortcut>() {
-            let _ = app.global_shortcut().unregister(old_sc);
+    if let Ok(old_sc) = current.parse::<Shortcut>() {
+        let _ = app.global_shortcut().unregister(old_sc);
+    }
+    let new_sc: Shortcut = new_hotkey.parse().map_err(|_| "Failed to parse shortcut".to_string())?;
+    let tx_clone = state.tx.clone();
+    app.global_shortcut().on_shortcut(new_sc, move |_app, _shortcut, event| {
+        if event.state() == ShortcutState::Pressed {
+            let _ = tx_clone.try_send(true);
+        } else if event.state() == ShortcutState::Released {
+            let _ = tx_clone.try_send(false);
         }
-        let new_sc: Shortcut = new_hotkey
-            .parse()
-            .map_err(|_| "Failed to parse shortcut".to_string())?;
-        let tx_clone = state.tx.clone();
-        app.global_shortcut()
-            .on_shortcut(new_sc, move |_app, _shortcut, event| {
-                if event.state() == ShortcutState::Pressed {
-                    let _ = tx_clone.try_send(true);
-                } else if event.state() == ShortcutState::Released {
-                    let _ = tx_clone.try_send(false);
-                }
-            })
-            .map_err(|e| format!("Failed to register shortcut: {}", e))?;
-        *current = new_hotkey;
-        Ok(())
+    }).map_err(|e| format!("Failed to register shortcut: {}", e))?;
+    *current = new_hotkey;
+    Ok(())
     }
 }
 
@@ -733,10 +565,7 @@ fn start_quick_ocr_capture(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn unregister_ocr_hotkey(
-    app: tauri::AppHandle,
-    state: tauri::State<AppState>,
-) -> Result<(), String> {
+fn unregister_ocr_hotkey(app: tauri::AppHandle, state: tauri::State<AppState>) -> Result<(), String> {
     let current = state.current_ocr_hotkey.lock().unwrap();
     if let Ok(old_sc) = current.parse::<Shortcut>() {
         let _ = app.global_shortcut().unregister(old_sc);
@@ -745,40 +574,27 @@ fn unregister_ocr_hotkey(
 }
 
 #[tauri::command]
-fn update_ocr_hotkey(
-    app: tauri::AppHandle,
-    state: tauri::State<AppState>,
-    new_hotkey: String,
-) -> Result<(), String> {
+fn update_ocr_hotkey(app: tauri::AppHandle, state: tauri::State<AppState>, new_hotkey: String) -> Result<(), String> {
     let mut current = state.current_ocr_hotkey.lock().unwrap();
-    if *current == new_hotkey {
-        return Ok(());
-    }
+    if *current == new_hotkey { return Ok(()); }
     if let Ok(old_sc) = current.parse::<Shortcut>() {
         let _ = app.global_shortcut().unregister(old_sc);
     }
 
-    let new_sc: Shortcut = new_hotkey
-        .parse()
-        .map_err(|_| "Failed to parse OCR shortcut".to_string())?;
+    let new_sc: Shortcut = new_hotkey.parse().map_err(|_| "Failed to parse OCR shortcut".to_string())?;
     let app_handle = app.clone();
-    app.global_shortcut()
-        .on_shortcut(new_sc, move |_app, _shortcut, event| {
-            if event.state() == ShortcutState::Pressed {
-                start_quick_ocr_capture(app_handle.clone());
-            }
-        })
-        .map_err(|e| format!("Failed to register OCR shortcut: {}", e))?;
+    app.global_shortcut().on_shortcut(new_sc, move |_app, _shortcut, event| {
+        if event.state() == ShortcutState::Pressed {
+            start_quick_ocr_capture(app_handle.clone());
+        }
+    }).map_err(|e| format!("Failed to register OCR shortcut: {}", e))?;
 
     *current = new_hotkey;
     Ok(())
 }
 
 #[tauri::command]
-fn unregister_screenshot_hotkey(
-    app: tauri::AppHandle,
-    state: tauri::State<AppState>,
-) -> Result<(), String> {
+fn unregister_screenshot_hotkey(app: tauri::AppHandle, state: tauri::State<AppState>) -> Result<(), String> {
     let current = state.current_screenshot_hotkey.lock().unwrap();
     if let Ok(old_sc) = current.parse::<Shortcut>() {
         let _ = app.global_shortcut().unregister(old_sc);
@@ -787,34 +603,23 @@ fn unregister_screenshot_hotkey(
 }
 
 #[tauri::command]
-fn update_screenshot_hotkey(
-    app: tauri::AppHandle,
-    state: tauri::State<AppState>,
-    new_hotkey: String,
-) -> Result<(), String> {
+fn update_screenshot_hotkey(app: tauri::AppHandle, state: tauri::State<AppState>, new_hotkey: String) -> Result<(), String> {
     let mut current = state.current_screenshot_hotkey.lock().unwrap();
-    if *current == new_hotkey {
-        return Ok(());
-    }
+    if *current == new_hotkey { return Ok(()); }
     if let Ok(old_sc) = current.parse::<Shortcut>() {
         let _ = app.global_shortcut().unregister(old_sc);
     }
 
-    let new_sc: Shortcut = new_hotkey
-        .parse()
-        .map_err(|_| "Failed to parse screenshot shortcut".to_string())?;
+    let new_sc: Shortcut = new_hotkey.parse().map_err(|_| "Failed to parse screenshot shortcut".to_string())?;
     let app_handle = app.clone();
-    app.global_shortcut()
-        .on_shortcut(new_sc, move |_app, _shortcut, event| {
-            if event.state() == ShortcutState::Pressed {
-                if let Err(err) = open_screenshot_overlay_with_mode(&app_handle, "screenshot") {
-                    let _ = app_handle.emit("app-error", err.clone());
-                    let _ =
-                        app_handle.emit("app-log", format!("❌ Screenshot overlay error: {}", err));
-                }
+    app.global_shortcut().on_shortcut(new_sc, move |_app, _shortcut, event| {
+        if event.state() == ShortcutState::Pressed {
+            if let Err(err) = open_screenshot_overlay_with_mode(&app_handle, "screenshot") {
+                let _ = app_handle.emit("app-error", err.clone());
+                let _ = app_handle.emit("app-log", format!("❌ Screenshot overlay error: {}", err));
             }
-        })
-        .map_err(|e| format!("Failed to register screenshot shortcut: {}", e))?;
+        }
+    }).map_err(|e| format!("Failed to register screenshot shortcut: {}", e))?;
 
     *current = new_hotkey;
     Ok(())
@@ -842,9 +647,26 @@ fn simulate_copy_in_pid(pid: &str) {
 
 fn play_sound(sound: &'static str) {
     std::thread::spawn(move || {
-        let _ = std::process::Command::new("afplay")
-            .arg(format!("/System/Library/Sounds/{}.aiff", sound))
-            .output();
+        #[cfg(target_os = "macos")]
+        {
+            let _ = std::process::Command::new("afplay")
+                .arg(format!("/System/Library/Sounds/{}.aiff", sound))
+                .output();
+        }
+        #[cfg(target_os = "windows")]
+        {
+            // Map to Windows system sounds via PowerShell
+            let ps_type = match sound {
+                "Tink" => "Asterisk",   // recording start
+                "Ping" => "Asterisk",   // success
+                "Basso" | "Funk" => "Hand", // failure
+                _ => "Asterisk",
+            };
+            let _ = std::process::Command::new("powershell.exe")
+                .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+                       "-Command", &format!("[System.Media.SystemSounds]::{}.Play()", ps_type)])
+                .output();
+        }
     });
 }
 
@@ -856,22 +678,17 @@ fn show_indicator(app: &tauri::AppHandle) {
                 for m in monitors {
                     let m_pos = m.position();
                     let m_size = m.size();
-                    if pos.x >= m_pos.x as f64
-                        && pos.x <= (m_pos.x + m_size.width as i32) as f64
-                        && pos.y >= m_pos.y as f64
-                        && pos.y <= (m_pos.y + m_size.height as i32) as f64
-                    {
+                    if pos.x >= m_pos.x as f64 && pos.x <= (m_pos.x + m_size.width as i32) as f64 &&
+                       pos.y >= m_pos.y as f64 && pos.y <= (m_pos.y + m_size.height as i32) as f64 {
                         target_monitor = Some(m.clone());
                         break;
                     }
                 }
             }
         }
-
+        
         if target_monitor.is_none() {
-            target_monitor = app
-                .get_webview_window("main")
-                .and_then(|mw| mw.primary_monitor().ok().flatten());
+            target_monitor = app.get_webview_window("main").and_then(|mw| mw.primary_monitor().ok().flatten());
         }
 
         if let Some(monitor) = target_monitor {
@@ -902,6 +719,12 @@ pub fn run() {
     let (tx, mut rx) = mpsc::channel(32);
     let audio_recorder = Arc::new(audio::AudioRecorder::new());
 
+    // Install the push-to-talk low-level keyboard hook immediately, before
+    // WebView2 loads. This avoids the several-second gap where the user presses
+    // the hotkey and nothing happens because Tauri's setup() hasn't run yet.
+    #[cfg(target_os = "windows")]
+    windows_ptt_hook::start(tx.clone(), "CmdOrCtrl+Shift+Space");
+
     tauri::Builder::default()
         .manage(AppState {
             recording_mode: Mutex::new("push_to_talk".to_string()),
@@ -924,12 +747,12 @@ pub fn run() {
 
             // --- Tray icon ---
             let show_item = MenuItem::with_id(app, "show", "Show Settings", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit Mighty-Productivity-OS-Windows", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit Mighty Voice OS", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().cloned().expect("no app icon"))
-                .tooltip("Mighty-Productivity-OS-Windows")
+                .tooltip("Mighty Voice OS")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -1172,6 +995,11 @@ pub fn run() {
                     }
                 }
             });
+
+            // --- Startup complete ---
+            play_sound("Tink");
+            ocr::runtime_log("startup complete — hotkeys active");
+            let _ = app_handle.emit("app-log", "✅ Mighty Voice ready — hotkeys active");
 
             Ok(())
         })
